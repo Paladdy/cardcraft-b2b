@@ -7,7 +7,7 @@ __pycache__/
 .coverage
 htmlcov/
 .DS_Store
-output/
+/output/
 *.egg-info/
 build/
 dist/
