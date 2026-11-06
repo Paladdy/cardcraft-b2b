@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=65"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cardcraft-b2b"
+version = "1.0.0"
+description = "Source-grounded B2B product cards with auditable LLM plans"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+cardcraft = "cardcraft.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["cardcraft*"]
