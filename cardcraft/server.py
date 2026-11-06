@@ -3,11 +3,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 
 from .domain import AppError, MAX_INPUT_BYTES, Product, parse_json
-from .provider import DemoPlanner, OpenAIPlanner
+from .provider import make_planner
 from .render import generate
 
 
-def make_handler(demo=False):
+def make_handler(demo=False, provider="openai"):
     class Handler(BaseHTTPRequestHandler):
         def setup(self):
             super().setup()
@@ -47,7 +47,7 @@ def make_handler(demo=False):
                 if len(raw) != size:
                     raise AppError("invalid_request", "Тело запроса не завершено.", 400)
                 product = Product.from_dict(parse_json(raw))
-                planner = DemoPlanner() if demo else OpenAIPlanner()
+                planner = make_planner(provider, demo)
                 self.respond(200, generate(product, planner))
             except AppError as error:
                 self.respond(error.status, {"error": {"code": error.code, "message": str(error)}})
@@ -59,8 +59,8 @@ def make_handler(demo=False):
     return Handler
 
 
-def serve(port, demo):
-    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(demo))
+def serve(port, demo, provider="openai"):
+    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(demo, provider))
     print(f"Cardcraft: http://127.0.0.1:{port} ({'demo' if demo else 'live'})", flush=True)
     try:
         server.serve_forever()

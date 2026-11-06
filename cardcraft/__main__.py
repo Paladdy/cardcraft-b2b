@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 from .domain import AppError, MAX_INPUT_BYTES, Product, parse_json
-from .provider import DemoPlanner, OpenAIPlanner
+from .provider import make_planner
 from .render import generate, markdown
 
 
@@ -12,6 +12,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Cardcraft — проверяемые черновики товарных карточек")
     parser.add_argument("input", nargs="?", help="Путь к JSON; '-' для stdin")
     parser.add_argument("--demo", action="store_true", help="Явный режим без LLM API")
+    parser.add_argument("--provider", choices=("openai", "ollama"), default="openai")
     parser.add_argument("--format", choices=("json", "markdown"), default="json")
     parser.add_argument("--output", "-o", type=Path)
     parser.add_argument("--serve", action="store_true", help="Локальный HTTP API на 127.0.0.1")
@@ -20,7 +21,7 @@ def main(argv=None):
     try:
         if args.serve:
             from .server import serve
-            serve(args.port, args.demo)
+            serve(args.port, args.demo, args.provider)
             return 0
         if not args.input:
             parser.error("укажите input или --serve")
@@ -30,7 +31,7 @@ def main(argv=None):
             with open(args.input, "rb") as stream:
                 raw = stream.read(MAX_INPUT_BYTES + 1)
         product = Product.from_dict(parse_json(raw))
-        planner = DemoPlanner() if args.demo else OpenAIPlanner()
+        planner = make_planner(args.provider, args.demo)
         card = generate(product, planner)
         output = markdown(card) if args.format == "markdown" else json.dumps(card, ensure_ascii=False, indent=2) + "\n"
         if args.output:

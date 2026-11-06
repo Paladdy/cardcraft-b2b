@@ -6,21 +6,9 @@ from dataclasses import asdict
 
 from .domain import AppError, pointer, validate_plan
 from .prompts import PROMPT_VERSION
+from .editorial import compose
 
 NO_DATA = "данных нет"
-ANGLES = {
-    "selection": "При подборе сопоставьте параметры прибора с техническим заданием на измерение.",
-    "procurement": "При подготовке закупки согласуйте обозначение прибора и параметры исполнения с заказчиком.",
-    "replacement": "При подборе замены отдельно проверьте соответствие исходному прибору и условиям монтажа.",
-}
-# No equipment properties, certifications, availability or delivery promises here.
-COPY = [
-    "Для выбора исполнения важно учитывать не только название, но и требования конкретной точки измерения. Сопоставьте исходные данные с проектной документацией и условиями эксплуатации на объекте.",
-    "Если нужный параметр не указан, запросите его у поставщика до согласования заказа. Пропуск в описании не означает, что функция отсутствует или что прибор соответствует требованию по умолчанию.",
-    "Для заявки подготовьте обозначение изделия, необходимое количество и перечень параметров, которые нужно подтвердить. Это поможет менеджеру уточнить состав предложения и избежать неоднозначности при подборе.",
-    "Перед включением позиции в спецификацию проверьте актуальную документацию производителя. Совместимость, комплект поставки, наличие и сроки требуют отдельного согласования; эта карточка их не подтверждает.",
-    "Окончательный выбор исполнения следует согласовать с ответственным техническим специалистом. Сохраните подтверждённые требования в заявке, чтобы использовать их при проверке предложения поставщика.",
-]
 
 
 def shorten_title(name, manufacturer):
@@ -55,6 +43,15 @@ def generate(product, planner):
     if not characteristics:
         characteristics = [{"label": "Характеристики", "value": NO_DATA, "source": None}]
     title, shortened = shorten_title(product.name, product.manufacturer)
+    headline_fact = next((facts[i] for i in plan["spec_order"]
+                          if facts[i]["label"].casefold() == "диапазон измерений"
+                          and i not in plan["review_ids"]), None)
+    if headline_fact:
+        candidate = product.name + " — " + headline_fact["value"]
+        if len(candidate) <= 70:
+            title = candidate
+            if product.manufacturer and len(title + " | " + product.manufacturer) <= 70:
+                title += " | " + product.manufacturer
     if shortened:
         warnings.append("Название длиннее лимита SEO: заголовок сокращён. Проверьте обозначение модели.")
     if missing:
@@ -72,55 +69,25 @@ def generate(product, planner):
               for i in plan["review_ids"]]
     if review:
         warnings.append("Модель обнаружила возможное противоречие или подозрительный фрагмент; нужна проверка.")
-    # Keep room for useful copy even with unusually long names/manufacturers.
-    intro = f"{product.name}."
-    evidence = [{"field": "seo_title", "source": "/name", "text": product.name}]
-    if product.manufacturer:
-        intro += f" Производитель: {product.manufacturer}."
-    else:
-        intro += " Производитель: данных нет."
-    blocks = [intro, ANGLES[plan["angle"]]]
-    references = [{"source": "/name", "text": product.name}]
-    if product.manufacturer:
-        references.append({"source": "/manufacturer", "text": product.manufacturer})
-        if product.manufacturer in title:
-            evidence.append({"field": "seo_title", "source": "/manufacturer", "text": product.manufacturer})
-    if purpose and len(" ".join(blocks)) + len(purpose["text"]) < 650:
-        blocks.append("Назначение по исходному описанию: «" + purpose["text"] + "».")
-        references.append({"source": "/description", "text": purpose["text"]})
-    selected = []
-    for i in plan["spec_order"]:
-        f = facts[i]
-        sentence = f"{f['label']}: {f['value']}"
-        if len(" ".join(blocks + selected + [sentence])) <= 650:
-            selected.append(sentence)
-            references.append({"source": f["source"], "text": f["value"]})
-    if selected:
-        blocks.append("По предоставленным данным: " + "; ".join(selected) + ".")
-    else:
-        blocks.append("Подробные технические данные проверяйте в списке характеристик карточки.")
-    if missing:
-        blocks.append("Часть сведений отсутствует и требует уточнения до заказа.")
-    for paragraph in COPY:
-        candidate = "\n\n".join(blocks + [paragraph])
-        if len(candidate) <= 1200:
-            blocks.append(paragraph)
-        if len("\n\n".join(blocks)) >= 800:
-            break
-    description = "\n\n".join(blocks)
+    ordered = [facts[i] for i in plan["spec_order"] if i not in plan["review_ids"]]
+    description, references, commercial, editorial = compose(
+        product, ordered, purpose, missing, plan["angle"])
     if not 800 <= len(description) <= 1200:
         raise AppError("render_failed", "Не удалось соблюсти длину SEO-описания без обрезки данных.", 422)
+    evidence = [{"field": "seo_title", "source": "/name", "text": product.name}]
+    if product.manufacturer and product.manufacturer in title:
+        evidence.append({"field": "seo_title", "source": "/manufacturer", "text": product.manufacturer})
+    if headline_fact and headline_fact["value"] in title:
+        evidence.append({"field": "seo_title", "source": headline_fact["source"], "text": headline_fact["value"]})
     evidence.extend({"field": "seo_description", **r} for r in references)
     queries = [product.name, f"{product.name} характеристики", f"{product.name} купить"]
     if product.manufacturer and product.manufacturer.casefold() not in product.name.casefold():
         queries.append(f"{product.name} {product.manufacturer}")
+    if headline_fact:
+        queries.append(product.name + " " + headline_fact["value"])
     queries = list(dict.fromkeys(queries))
-    commercial = {
-        "audience": "Специалисты по подбору КИП и закупке оборудования; применимость к объекту нужно подтвердить.",
-        "task": purpose["text"] if purpose else "Назначение и решаемая задача: данных нет либо требуется уточнение.",
-        "task_source": "/description" if purpose else None,
-        "next_step": "Сопоставить характеристики с техническим заданием и запросить недостающие сведения.",
-    }
+    if editorial["general_paragraphs"] >= 2:
+        warnings.append("Мало предметных данных: часть SEO-текста посвящена вопросам подбора. Дополните паспорт перед публикацией.")
     if not purpose:
         warnings.append("Назначение не подтверждено выбранным фрагментом; уточните его для commercial-блока.")
     if planner.mode == "demo":
@@ -136,7 +103,8 @@ def generate(product, planner):
                     "description_chars": len(description), "query_count": len(queries),
                     "length_checks_passed": len(title) <= 70 and 800 <= len(description) <= 1200},
         "meta": {"mode": planner.mode, "model": planner.model,
-                 "prompt_version": PROMPT_VERSION, "source_sha256": fingerprint,
+                 "prompt_version": getattr(planner, "prompt_version", PROMPT_VERSION), "source_sha256": fingerprint,
+                 "editorial": editorial,
                  "editorial_plan": plan},
     }
 
@@ -160,7 +128,11 @@ def markdown(card):
     lines.extend("- " + escape(x) for x in card["search_queries"])
     lines.extend(["", "## Для менеджера", ""])
     lines.extend(escape(card["commercial"][k]) + "\n" for k in ("audience", "task", "next_step"))
-    lines.extend(["## Перед публикацией", ""])
+    lines.extend(["**На что опереться при подборе**", ""])
+    lines.extend(f"- {escape(x['label'])}: {escape(x['value'])}" for x in card["commercial"]["selection_basis"])
+    lines.extend(["", "**Вопросы заказчику**", ""])
+    lines.extend("- " + escape(x) for x in card["commercial"]["questions"])
+    lines.extend(["", "## Перед публикацией", ""])
     lines.extend("- " + escape(x) for x in card["warnings"])
     lines.extend("- " + escape(x["field"] + ": " + x["message"]) for x in card["missing_fields"])
     lines.extend("- Проверить: " + escape(x["text"]) for x in card["review_items"])

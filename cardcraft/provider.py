@@ -77,3 +77,14 @@ class DemoPlanner:
                         if re.match(r"Прибор предназначен для ", x["text"])), None)
         return {"spec_order": [f["id"] for f in product.facts()], "purpose_id": purpose,
                 "review_ids": [], "angle": "selection"}
+
+
+def make_planner(provider="openai", demo=False):
+    if demo:
+        return DemoPlanner()
+    if provider == "ollama":
+        from .ollama import OllamaPlanner
+        return OllamaPlanner()
+    if provider == "openai":
+        return OpenAIPlanner()
+    raise AppError("invalid_provider", "Неизвестный провайдер LLM.")
